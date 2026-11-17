@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" type="image/png" href="icon.png" />
+    <link rel="apple-touch-icon" href="icon.png" />
+    <title>Vibe Tanks</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        font-family: Helvetica, Arial, sans-serif;
+      }
+      #game {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        touch-action: none;
+      }
+      /* Desktop overlay (no touch controls): score at the top left, pause at the top right */
+      #hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        display: none;
+      }
+      #hud.visible {
+        display: block;
+      }
+      #score {
+        position: absolute;
+        left: 8px;
+        top: 14px;
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-weight: bold;
+        font-size: 24px;
+        color: #fff;
+      }
+      #score.plate {
+        color: rgb(0, 51, 153);
+        background: rgba(255, 255, 255, 0.9);
+        border: 2px solid rgb(0, 77, 179);
+      }
+      #pause {
+        position: absolute;
+        right: 20px;
+        top: 20px;
+        padding: 8px 16px;
+        border: 0;
+        border-radius: 8px;
+        background: rgba(128, 128, 128, 0.5);
+        color: #fff;
+        font: bold 18px Helvetica, Arial, sans-serif;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      #pause:hover {
+        background: rgba(160, 160, 160, 0.6);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="hud">
+      <div id="score">Score: 0</div>
+      <button id="pause" type="button">⏸ Pause</button>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
