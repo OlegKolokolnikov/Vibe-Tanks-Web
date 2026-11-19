@@ -18,12 +18,19 @@ export class EnemySpawner {
   /** Extra enemies from the tank power-up (spawned separately, don't affect the boss) */
   private extraEnemiesToSpawn = 0;
 
+  private readonly totalEnemies: number;
+
+  /** `plannedTypes`: the exact enemies to send (crazy mode); otherwise they are planned for the level */
   constructor(
-    private readonly totalEnemies: number,
+    totalEnemies: number,
     private readonly maxOnScreen: number,
     /** Every 10th level: the last planned tank is the boss */
     private readonly hasBoss = false,
+    private readonly spawnDelay: number = C.spawnDelay,
+    plannedTypes: EnemyType[] | null = null,
   ) {
+    this.totalEnemies = plannedTypes?.length ?? totalEnemies;
+    this.spawnCooldown = spawnDelay;
     const ts = C.tileSize;
     const y = (C.mapHeight - 2) * ts;
     this.spawnPositions = [
@@ -31,7 +38,24 @@ export class EnemySpawner {
       { x: Math.floor(C.mapWidth / 2) * ts, y },
       { x: (C.mapWidth - 2) * ts, y },
     ];
-    this.plannedEnemyTypes = this.planEnemyTypes(totalEnemies);
+    this.plannedEnemyTypes = plannedTypes ?? this.planEnemyTypes(totalEnemies);
+  }
+
+  /** Crazy mode: any enemy at all, bosses and aliens included */
+  static crazyEnemyTypes(count: number): EnemyType[] {
+    const weighted: [EnemyType, number][] = [
+      [EnemyType.Regular, 20], [EnemyType.Fast, 18], [EnemyType.Armored, 18], [EnemyType.Power, 15],
+      [EnemyType.Heavy, 15], [EnemyType.Alien, 7], [EnemyType.Boss, 7],
+    ];
+    const total = weighted.reduce((sum, [, w]) => sum + w, 0);
+    return Array.from({ length: count }, () => {
+      let roll = Math.floor(Math.random() * total);
+      for (const [type, weight] of weighted) {
+        if (roll < weight) return type;
+        roll -= weight;
+      }
+      return EnemyType.Regular;
+    });
   }
 
   /**
@@ -88,7 +112,7 @@ export class EnemySpawner {
     if (existingEnemies.length >= this.maxOnScreen) return null;
     this.spawnCooldown -= 1;
     if (this.spawnCooldown > 0) return null;
-    this.spawnCooldown = C.spawnDelay;
+    this.spawnCooldown = this.spawnDelay;
 
     const type = this.spawnedCount < this.plannedEnemyTypes.length ? this.plannedEnemyTypes[this.spawnedCount] : EnemyType.Regular;
     const position = this.findValidSpawnPosition(type, existingEnemies, playerTank, map, otherTanks);

@@ -9,6 +9,7 @@ import type { View } from "../engine/view";
 import { Base, type Resident } from "./base";
 import { makeGorodetsBorder, makeGzhelBorder, makeKhokhlomaBorder } from "./borders";
 import type { Bullet } from "./bullet";
+import { CheatSettings } from "./cheatSettings";
 import { C, EnemyType, boxesOverlap, scoreForEnemyType, spawnPosition } from "./constants";
 import { Direction } from "./direction";
 import { EasterEgg } from "./easterEgg";
@@ -38,6 +39,10 @@ export interface PlayerPowerUps {
   baseSpeedMultiplier: number;
   /** Faster shooting from defeated bosses (until a new game) */
   bossFireBoost: number;
+  /** Cheats: MAGIC from the start */
+  hasMagic: boolean;
+  /** Cheats: one-minute shield at the start */
+  shield: boolean;
 }
 
 export function defaultPowerUps(): PlayerPowerUps {
@@ -51,6 +56,8 @@ export function defaultPowerUps(): PlayerPowerUps {
     laserRounds: 0,
     baseSpeedMultiplier: 1,
     bossFireBoost: 0,
+    hasMagic: false,
+    shield: false,
   };
 }
 
@@ -82,6 +89,8 @@ export interface GameSceneOptions {
   gzhelStreak?: number;
   bonusStage?: boolean;
   continues?: number;
+  /** Cheats: base starts behind steel */
+  startSteelBase?: boolean;
 }
 
 /** What the desktop HTML overlay shows (score line, white plate on Gzhel / bonus levels) */
@@ -193,7 +202,9 @@ export class GameScene extends Scene {
   powerUps: PowerUp[] = [];
   base!: Base;
 
-  ufo: UFO | null = null;
+  ufos: UFO[] = [];
+  /** Crazy mode: UFOs still to come this level */
+  private crazyUFOsLeft = 0;
   easterEgg: EasterEgg | null = null;
   ufoSpawnedThisLevel = false;
   ufoWasKilled = false;
@@ -205,12 +216,14 @@ export class GameScene extends Scene {
   private readonly goldSpawnChance = 0.0003;
   private ufoMessageLabel: LabelNode | null = null;
 
-  gzhelTank: Tank | null = null;
+  /** Friends (Gzhel tanks): the Gzhel / returning friend, or a crowd in crazy mode */
+  friends: Tank[] = [];
   private returningFriend: FriendCarry | null;
-  private friendLivesLabel: LabelNode | null = null;
-  private gzhelSpawnedThisLevel = false;
-  private gzhelSpawnFrame = 0;
+  private friendLivesLabels = new Map<Tank, LabelNode>();
+  /** Friends still to appear this level, each at its frame */
+  private pendingFriends: { carry: FriendCarry | null; hits: number | null; frame: number }[] = [];
   private gzhelFrameCounter = 0;
+  private readonly startSteelBase: boolean;
 
   // UI
   touchController!: TouchController;
@@ -294,6 +307,7 @@ export class GameScene extends Scene {
   constructor(size: Size, options: GameSceneOptions = {}) {
     super(size);
     this.continues = options.continues ?? C.startingContinues;
+    this.startSteelBase = options.startSteelBase ?? false;
     this.returningFriend = options.friend ?? null;
     this.gzhelStreak = options.gzhelStreak ?? 0;
     this.bonusStage = options.bonusStage ?? false;
@@ -327,6 +341,8 @@ export class GameScene extends Scene {
     this.setupGame();
     this.setupUI();
     if (this.bonusStage) this.showUFOMessage("✨ SECRET BONUS STAGE! ✨", rgb(1.0, 0.55, 0.1));
+    else if (CheatSettings.isCrazy) this.showUFOMessage("🤪 CRAZY MODE! 🤪", Colors.magenta);
+    if (this.startSteelBase) this.activateBaseProtection();
     SoundManager.playIntro();
   }
 
@@ -406,12 +422,107 @@ export class GameScene extends Scene {
     this.playerTank = this.makePlayerTank(1, this.initialLives, this.initialPowerUps);
     if (this.isTwoPlayer) this.player2Tank = this.makePlayerTank(2, this.initialLives2, this.initialPowerUps2);
 
-    const totalEnemies = GameState.isEasyMode ? 18 : Math.min(20 + (this.level - 1) * 2, 50);
+    const cheats = CheatSettings.active;
+    let totalEnemies = GameState.isEasyMode ? 18 : Math.min(20 + (this.level - 1) * 2, 50);
+    let maxOnScreen = C.maxEnemiesOnScreen;
+    let plannedTypes: EnemyType[] | null = null;
+    if (cheats.crazyMode) {
+      // Crazy mode: up to 1000 enemies of any kind, bosses and aliens included, and a few UFOs
+      totalEnemies = randomInt(10, 1000);
+      maxOnScreen = randomInt(5, 20);
+      plannedTypes = EnemySpawner.crazyEnemyTypes(totalEnemies);
+      this.crazyUFOsLeft = randomInt(1, 5);
+    } else {
+      if (cheats.enemyCount > 0) totalEnemies = cheats.enemyCount;
+      if (cheats.enemiesOnScreen > 0) maxOnScreen = cheats.enemiesOnScreen;
+    }
 
-    if (this.returningFriend) this.gzhelSpawnFrame = 60;
-    else if (this.showGzhelBorder) this.gzhelSpawnFrame = randomInt(600, 2400);
+    // Returning friend a second after the start; the Gzhel friend 10-40 seconds in
+    if (this.returningFriend) this.pendingFriends.push({ carry: this.returningFriend, hits: null, frame: 60 });
+    else if (this.showGzhelBorder) this.pendingFriends.push({ carry: null, hits: null, frame: randomInt(600, 2400) });
+    // Crazy mode: a random crowd of friends, each with 1-5 hits
+    if (cheats.crazyMode) {
+      const count = randomInt(1, 6);
+      for (let i = 0; i < count; i++) this.pendingFriends.push({ carry: null, hits: randomInt(1, 5), frame: 90 + i * 40 });
+    }
 
-    this.enemySpawner = new EnemySpawner(totalEnemies, C.maxEnemiesOnScreen, isBossLevel);
+    // More tanks on screen: they come in faster
+    this.enemySpawner = new EnemySpawner(
+      totalEnemies,
+      maxOnScreen,
+      plannedTypes === null && isBossLevel,
+      maxOnScreen > C.maxEnemiesOnScreen ? 20 : C.spawnDelay,
+      plannedTypes,
+    );
+  }
+
+  // MARK: - Cheats
+
+  /** Start a new game from the menu or NEW GAME: cheats set the level, lives and power-ups */
+  static newGame(size: Size, playerCount: number): GameScene {
+    const cheats = CheatSettings.active;
+    return new GameScene(size, {
+      level: cheats.startLevel,
+      score: 0,
+      lives: GameScene.startLives(),
+      sessionSeed: randomInt(1, 2 ** 31 - 1),
+      powerUps: GameScene.startPowerUps(),
+      playerCount,
+      player2Lives: GameScene.startLives(),
+      player2PowerUps: GameScene.startPowerUps(),
+      startSteelBase: cheats.steelBase,
+    });
+  }
+
+  /** Lives at the start of a game (or a continue): 3, the cheat setting, or crazy 3-99 */
+  private static startLives(): number {
+    const cheats = CheatSettings.active;
+    return cheats.crazyMode ? randomInt(3, 99) : cheats.playerLives;
+  }
+
+  /** Power-ups at the start of a game (or a continue), on top of what is kept */
+  private static startPowerUps(kept: PlayerPowerUps = defaultPowerUps()): PlayerPowerUps {
+    const cheats = CheatSettings.active;
+    const p = { ...kept };
+    let stars: number, guns: number, cars: number;
+    if (cheats.crazyMode) {
+      // Crazy mode: a random set every start
+      const coin = () => Math.random() < 0.5;
+      stars = randomInt(0, 3);
+      guns = randomInt(0, 3);
+      cars = randomInt(0, 4);
+      p.bulletPower = coin() ? 2 : 1;
+      p.canSwim = coin();
+      p.canDestroyTrees = coin();
+      p.laserRounds = randomInt(1, 4) === 1 ? 1 : 0;
+      p.hasMagic = coin();
+      p.shield = coin();
+    } else {
+      stars = cheats.stars;
+      guns = cheats.machineguns;
+      cars = cheats.cars;
+      if (cheats.gun) p.bulletPower = 2;
+      if (cheats.ship) p.canSwim = true;
+      if (cheats.saw) p.canDestroyTrees = true;
+      if (cheats.laser) p.laserRounds = 1;
+      p.hasMagic = cheats.magic;
+      p.shield = cheats.shield;
+    }
+    p.starCount = Math.max(p.starCount, stars);
+    p.machinegunCount = Math.max(p.machinegunCount, guns);
+    p.speedMultiplier = Math.min(Math.max(p.speedMultiplier, p.baseSpeedMultiplier + cars * 0.3), 2.5);
+    return p;
+  }
+
+  /** Cheat speed, fire rate and armor for a new enemy */
+  private applyEnemyCheats(enemy: Tank): void {
+    const cheats = CheatSettings.active;
+    enemy.cheatSpeed = cheats.enemySpeed;
+    enemy.cheatFireRate = cheats.enemyFireRate;
+    if (cheats.enemyArmor > 0) {
+      enemy.health += cheats.enemyArmor;
+      enemy.maxHealth += cheats.enemyArmor;
+    }
   }
 
   private makePlayerTank(number: number, lives: number, powerUps: PlayerPowerUps): Tank {
@@ -426,7 +537,17 @@ export class GameScene extends Scene {
     tank.laserRounds = powerUps.laserRounds;
     tank.baseSpeedMultiplier = powerUps.baseSpeedMultiplier;
     tank.bossFireBoost = powerUps.bossFireBoost;
+    tank.hasMagic = powerUps.hasMagic;
+
+    // Cheats: player speed and fire rate (faster shooting also allows more shots in the air)
+    const cheats = CheatSettings.active;
+    tank.cheatSpeed = cheats.playerSpeed;
+    tank.cheatFireRate = cheats.playerFireRate;
+    if (cheats.playerFireRate >= 2) tank.maxBullets = C.maxBulletsPerTank + 2;
+    else if (cheats.playerFireRate > 1) tank.maxBullets = C.maxBulletsPerTank + 1;
+
     tank.drawTank();
+    if (powerUps.shield) tank.activateShield(C.shieldDuration);
     if (lives <= 0) {
       tank.health = 0;
       tank.isHidden = true;
@@ -456,6 +577,8 @@ export class GameScene extends Scene {
       bossFireBoost: tank.bossFireBoost,
       // Laser ends with the round (a kill-bonus laser carries into the next one)
       laserRounds: Math.max(tank.laserRounds - 1, 0),
+      hasMagic: false,
+      shield: false,
     };
   }
 
@@ -643,9 +766,15 @@ export class GameScene extends Scene {
       if (this.freezeTimer > 0 && !enemy.isFreezeImmune) continue;
 
       if (enemy.ai) {
-        const { direction, shouldShoot } = enemy.ai.update(this.gameMap, this.playerTanks, this.allTanks);
+        const decision = enemy.ai.update(this.gameMap, this.playerTanks, this.allTanks);
+        const direction = decision.direction;
         if (direction !== null) enemy.move(direction, this.gameMap, this.allTanks);
         if (enemy.canDestroyTrees) this.checkForestDestruction(enemy);
+        // Cheats: enemies shoot less or more often
+        let shouldShoot = decision.shouldShoot;
+        const fireRate = enemy.cheatFireRate;
+        if (fireRate < 1) shouldShoot = shouldShoot && Math.random() < fireRate;
+        else if (fireRate > 1 && !shouldShoot) shouldShoot = Math.random() < 0.03 * (fireRate - 1);
         if (shouldShoot) {
           const newBullets = enemy.shoot();
           if (newBullets.length) {
@@ -666,10 +795,13 @@ export class GameScene extends Scene {
 
   // MARK: - Gzhel friend
 
+  /** Bring in the next friend whose moment has come (Gzhel friend, returning friend, crazy mode friends) */
   private updateGzhelSpawn(): void {
-    if (!(this.showGzhelBorder || this.returningFriend) || this.gzhelSpawnedThisLevel || this.victoryDelayTimer !== 0) return;
+    if (!this.pendingFriends.length || this.victoryDelayTimer !== 0) return;
     this.gzhelFrameCounter += 1;
-    if (this.gzhelFrameCounter < this.gzhelSpawnFrame) return;
+    const index = this.pendingFriends.findIndex((f) => this.gzhelFrameCounter >= f.frame);
+    if (index < 0) return;
+    const pending = this.pendingFriends[index];
 
     const size = C.tankSize;
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -679,7 +811,7 @@ export class GameScene extends Scene {
       if (this.allTanks.some((t) => t.isAlive && boxesOverlap(pos, size, t.position, t.size.width))) continue;
 
       const tank = new Tank(pos, Direction.Up, false, 0, EnemyType.Gzhel);
-      const carry = this.returningFriend;
+      const carry = pending.carry;
       if (carry) {
         // Same friend as last level: keeps its hits and upgrades; a Gzhel level heals it to at least 3 hits
         const hits = this.showGzhelBorder ? Math.max(carry.health, C.friendHits) : carry.health;
@@ -692,9 +824,12 @@ export class GameScene extends Scene {
         tank.canSwim = carry.canSwim;
         tank.canDestroyTrees = carry.canDestroyTrees;
         tank.drawTank();
+      } else if (pending.hits !== null) {
+        tank.health = pending.hits;
+        tank.maxHealth = pending.hits;
       }
-      this.gzhelTank = tank;
-      this.gzhelSpawnedThisLevel = true;
+      this.friends.push(tank);
+      this.pendingFriends.splice(index, 1);
       this.invalidateAllTanksCache();
       this.gameLayer.addChild(tank);
       this.showSpawnEffect(pos);
@@ -704,37 +839,36 @@ export class GameScene extends Scene {
   }
 
   private updateGzhelTank(): void {
-    const gzhel = this.gzhelTank;
-    if (!gzhel || !gzhel.isAlive || !gzhel.ai) return;
+    for (const gzhel of this.friends) {
+      if (!gzhel.isAlive || !gzhel.ai) continue;
 
-    let decision;
-    if (this.victoryDelayTimer > 0) {
-      const takeable = this.powerUps.filter((p) => p.type !== PowerUpType.Laser && !p.isPlayersOnly).map((p) => p.position);
-      decision = gzhel.ai.updateFriendLevelCleared(this.gameMap, takeable);
-    } else {
-      const enemyBullets = this.bullets.filter((b) => b.isFromEnemy && !this.isBulletRemoved(b));
-      decision = gzhel.ai.updateFriend(this.gameMap, this.enemyTanks, this.allTanks, enemyBullets);
-    }
-    if (decision.direction !== null) gzhel.move(decision.direction, this.gameMap, this.allTanks);
-    this.updateFriendLivesLabel();
-    if (decision.shouldShoot) {
-      const newBullets = gzhel.shoot();
-      if (newBullets.length) {
-        SoundManager.playShoot();
-        this.addBulletsWithSpawnCheck(newBullets);
+      let decision;
+      if (this.victoryDelayTimer > 0) {
+        const takeable = this.powerUps.filter((p) => p.type !== PowerUpType.Laser && !p.isPlayersOnly).map((p) => p.position);
+        decision = gzhel.ai.updateFriendLevelCleared(this.gameMap, takeable);
+      } else {
+        const enemyBullets = this.bullets.filter((b) => b.isFromEnemy && !this.isBulletRemoved(b));
+        decision = gzhel.ai.updateFriend(this.gameMap, this.enemyTanks, this.allTanks, enemyBullets);
       }
+      if (decision.direction !== null) gzhel.move(decision.direction, this.gameMap, this.allTanks);
+      this.updateFriendLivesLabel(gzhel);
+      if (decision.shouldShoot) {
+        const newBullets = gzhel.shoot();
+        if (newBullets.length) {
+          SoundManager.playShoot();
+          this.addBulletsWithSpawnCheck(newBullets);
+        }
+      }
+      gzhel.update();
     }
-    gzhel.update();
   }
 
-  /** The friend leaves with a colorful farewell */
-  dismissGzhelTank(killed = false): void {
-    this.gzhelSpawnedThisLevel = true;
-    const gzhel = this.gzhelTank;
-    if (!gzhel) return;
-    this.gzhelTank = null;
-    this.friendLivesLabel?.removeFromParent();
-    this.friendLivesLabel = null;
+  /** A friend leaves with a colorful farewell */
+  dismissGzhelTank(gzhel: Tank, killed = false): void {
+    if (!this.friends.includes(gzhel)) return;
+    this.friends = this.friends.filter((f) => f !== gzhel);
+    this.friendLivesLabels.get(gzhel)?.removeFromParent();
+    this.friendLivesLabels.delete(gzhel);
     if (killed) this.showUFOMessage("FRIEND LOST!", FRIEND_BLUE);
     gzhel.health = 0;
     gzhel.ai = null;
@@ -752,16 +886,15 @@ export class GameScene extends Scene {
     gzhel.run(Action.sequence([spinAndPop, burst, Action.removeFromParent()]));
   }
 
-  /** Hearts floating above the friend: one per remaining hit */
-  private updateFriendLivesLabel(): void {
-    const friend = this.gzhelTank;
-    if (!friend || !friend.isAlive) return;
-    let lbl = this.friendLivesLabel;
+  /** Hearts floating above a friend: one per remaining hit */
+  private updateFriendLivesLabel(friend: Tank): void {
+    if (!friend.isAlive) return;
+    let lbl = this.friendLivesLabels.get(friend);
     if (!lbl) {
       lbl = label("", 10, rgb(0.35, 0.6, 1.0), { v: "bottom" });
       lbl.zPosition = 55;
       this.gameLayer.addChild(lbl);
-      this.friendLivesLabel = lbl;
+      this.friendLivesLabels.set(friend, lbl);
     }
     const hits = Math.max(0, friend.health);
     lbl.text = hits <= 5 ? "♥".repeat(hits) : `♥x${hits}`;
@@ -772,7 +905,7 @@ export class GameScene extends Scene {
     friend.run(
       Action.sequence([Action.fadeAlpha(0.3, 0.08), Action.fadeAlpha(1.0, 0.08), Action.fadeAlpha(0.3, 0.08), Action.fadeAlpha(1.0, 0.08)]),
     );
-    this.updateFriendLivesLabel();
+    this.updateFriendLivesLabel(friend);
   }
 
   /** Friend pickups: tank upgrades go to the friend, battlefield effects work for the player's side. No score. */
@@ -803,7 +936,7 @@ export class GameScene extends Scene {
         powerUp.applyTo(friend);
         friend.drawTank();
     }
-    this.updateFriendLivesLabel();
+    this.updateFriendLivesLabel(friend);
   }
 
   // MARK: - Boss
@@ -1084,7 +1217,7 @@ export class GameScene extends Scene {
   }
 
   private updateSpawner(): void {
-    const nonEnemyTanks = [this.gzhelTank, this.player2Tank].filter((t): t is Tank => t !== null);
+    const nonEnemyTanks = [...this.friends, ...(this.player2Tank ? [this.player2Tank] : [])];
     const newEnemy = this.enemySpawner.update(this.enemyTanks, this.playerTank, this.gameMap, nonEnemyTanks);
     if (newEnemy) {
       this.enemyTanks.push(newEnemy);
@@ -1099,12 +1232,14 @@ export class GameScene extends Scene {
         newEnemy.maxHealth = newEnemy.health;
         this.showEffect("☠ BOSS IS COMING! ☠", Colors.red);
       }
+      this.applyEnemyCheats(newEnemy);
     }
     const extra = this.enemySpawner.spawnExtraEnemy(this.enemyTanks, this.playerTank, this.gameMap, nonEnemyTanks);
     if (extra) {
       this.enemyTanks.push(extra);
       this.invalidateAllTanksCache();
       this.applyBossSpeedUp(extra);
+      this.applyEnemyCheats(extra);
       this.gameLayer.addChild(extra);
       this.showSpawnEffect(extra.position);
     }
@@ -1141,35 +1276,42 @@ export class GameScene extends Scene {
       }
     }
 
-    if (!this.ufoSpawnedThisLevel && !this.ufo && !this.alienMode && !GameState.isEasyMode) {
+    const cheats = CheatSettings.active;
+    if (!cheats.ufoEnabled) {
+      // Cheats: UFO switched off
+    } else if (cheats.crazyMode) {
+      // Crazy mode: several UFOs a level, no conditions (up to 3 at once)
+      if (this.crazyUFOsLeft > 0 && this.ufos.length < 3 && this.victoryDelayTimer === 0 && Math.random() < 0.002) {
+        this.crazyUFOsLeft -= 1;
+        this.spawnUFO();
+      }
+    } else if (!this.ufoSpawnedThisLevel && !this.ufos.length && !this.alienMode && !GameState.isEasyMode) {
       if (this.playerTanks.some((p) => p.machinegunCount > 0) && this.playerKills >= C.ufoKillsRequired && Math.random() < C.ufoSpawnChance) {
         this.spawnUFO();
       }
     }
 
-    const ufo = this.ufo;
-    if (!ufo || !ufo.isAlive) {
-      if (ufo && !this.ufoWasKilled) {
+    // A shot down UFO is removed right away, so one that is gone escaped
+    for (const ufo of [...this.ufos]) {
+      if (!ufo.isAlive) {
         this.showUFOMessage("UFO ESCAPED!", Colors.red);
         this.ufoEscapedThisLevel = true;
-      }
-      if (ufo && !ufo.isAlive) {
         ufo.removeFromParent();
-        this.ufo = null;
+        this.ufos = this.ufos.filter((u) => u !== ufo);
+        continue;
       }
-      return;
-    }
-
-    for (const bullet of ufo.update()) {
-      this.bullets.push(bullet);
-      this.gameLayer.addChild(bullet);
-      SoundManager.playLaser();
+      for (const bullet of ufo.update()) {
+        this.bullets.push(bullet);
+        this.gameLayer.addChild(bullet);
+        SoundManager.playLaser();
+      }
     }
   }
 
   private spawnUFO(): void {
-    this.ufo = new UFO(this.gameMap.pixelSize);
-    this.gameLayer.addChild(this.ufo);
+    const ufo = new UFO(this.gameMap.pixelSize);
+    this.ufos.push(ufo);
+    this.gameLayer.addChild(ufo);
     this.ufoSpawnedThisLevel = true;
     this.showUFOMessage("UFO INCOMING!", Colors.yellow);
   }
@@ -1229,8 +1371,8 @@ export class GameScene extends Scene {
       if (this.isBulletRemoved(bullet)) continue;
 
       // The friend stops everyone else's bullets; only enemy bullets hurt it
-      const friend = this.gzhelTank;
-      if (friend && friend.isAlive && !bullet.isFromGzhel && bullet.collidesWithTank(friend)) {
+      const friend = bullet.isFromGzhel ? undefined : this.friends.find((f) => f.isAlive && bullet.collidesWithTank(f));
+      if (friend) {
         bulletsToRemove.push(bullet);
         if (bullet.isFromEnemy) {
           friend.damage();
@@ -1238,7 +1380,7 @@ export class GameScene extends Scene {
             this.flashFriendHit(friend);
           } else {
             SoundManager.playExplosion();
-            this.dismissGzhelTank(true);
+            this.dismissGzhelTank(friend, true);
           }
         }
         continue;
@@ -1377,22 +1519,26 @@ export class GameScene extends Scene {
   }
 
   private checkBulletUFOCollisions(): void {
-    const ufo = this.ufo;
-    if (!ufo || !ufo.isAlive) return;
-    for (const bullet of this.bullets) {
-      if (this.isBulletRemoved(bullet) || !ufo.collidesWith(bullet)) continue;
-      this.removeBullet(bullet);
-      if (ufo.damage()) {
-        this.ufoWasKilled = true;
-        ufo.createDestroyEffect();
-        ufo.removeFromParent();
-        const eggPosition = this.findRandomEmptyPosition();
-        this.easterEgg = new EasterEgg(eggPosition.x, eggPosition.y);
-        this.gameLayer.addChild(this.easterEgg);
-        this.showUFOMessage("UFO DESTROYED!", Colors.green);
-        this.ufo = null;
+    for (const ufo of [...this.ufos]) {
+      if (!ufo.isAlive) continue;
+      for (const bullet of this.bullets) {
+        if (this.isBulletRemoved(bullet) || !ufo.collidesWith(bullet)) continue;
+        this.removeBullet(bullet);
+        if (ufo.damage()) {
+          this.ufoWasKilled = true;
+          ufo.createDestroyEffect();
+          ufo.removeFromParent();
+          this.ufos = this.ufos.filter((u) => u !== ufo);
+          // One easter egg at a time
+          if (!this.easterEgg) {
+            const eggPosition = this.findRandomEmptyPosition();
+            this.easterEgg = new EasterEgg(eggPosition.x, eggPosition.y);
+            this.gameLayer.addChild(this.easterEgg);
+          }
+          this.showUFOMessage("UFO DESTROYED!", Colors.green);
+        }
+        break;
       }
-      break;
     }
   }
 
@@ -1444,15 +1590,16 @@ export class GameScene extends Scene {
       }
 
       const takeable = powerUp.type !== PowerUpType.Laser && !powerUp.isPlayersOnly;
-      const friend = this.gzhelTank;
-      if (friend && friend.isAlive && takeable && touches(friend, powerUp)) {
+      const friend = takeable ? this.friends.find((f) => f.isAlive && touches(f, powerUp)) : undefined;
+      if (friend) {
         this.handleFriendPowerUpCollection(powerUp, friend);
         toRemove.push(powerUp);
         SoundManager.playPowerUp();
         continue;
       }
 
-      if (takeable) {
+      // Cheats can stop enemies taking power-ups at all
+      if (takeable && CheatSettings.active.enemiesTakePowerUps) {
         const enemy = this.enemyTanks.find((e) => e.isAlive && touches(e, powerUp));
         if (enemy) {
           this.handleEnemyPowerUpCollection(powerUp, enemy);
@@ -1881,7 +2028,7 @@ export class GameScene extends Scene {
         this.victoryDelayTimer = C.levelBonusVictoryDelay;
       }
       // The friend comes along to the next level; one that hasn't appeared yet won't now
-      this.gzhelSpawnedThisLevel = true;
+      this.pendingFriends = [];
     }
     if (this.playerTanks.every((p) => p.lives <= 0 && !p.isAlive)) this.gameOver();
   }
@@ -2000,7 +2147,8 @@ export class GameScene extends Scene {
     SoundManager.stopGameplaySounds();
     setConsecutiveLosses(consecutiveLosses + 1);
 
-    this.isNewHighScore = this.bestScore > GameSettings.highScore;
+    // No high score with cheats on
+    this.isNewHighScore = !CheatSettings.isActive && this.bestScore > GameSettings.highScore;
     if (this.isNewHighScore) GameSettings.highScore = this.bestScore;
     this.showGameOverScreen();
   }
@@ -2447,7 +2595,8 @@ export class GameScene extends Scene {
     this.updateHud();
 
     const powerUps = this.sidebarPowerUps(this.playerTank);
-    if (this.gzhelTank?.isAlive) powerUps.friendHits = this.gzhelTank.health;
+    const friend = this.friends.find((f) => f.isAlive);
+    if (friend) powerUps.friendHits = friend.health;
     const powerUps2 = this.player2Tank ? this.sidebarPowerUps(this.player2Tank) : emptyPowerUpData();
     this.sidebar.update(this.enemySpawner.remainingEnemies, this.playerTank.lives, this.player2Tank?.lives ?? 0, this.level, powerUps, powerUps2);
   }
@@ -2483,7 +2632,7 @@ export class GameScene extends Scene {
 
   private get allTanks(): Tank[] {
     if (this.allTanksDirty) {
-      this.cachedAllTanks = [...this.playerTanks, ...this.enemyTanks, ...(this.gzhelTank ? [this.gzhelTank] : [])];
+      this.cachedAllTanks = [...this.playerTanks, ...this.enemyTanks, ...this.friends];
       this.allTanksDirty = false;
     }
     return this.cachedAllTanks;
@@ -2576,10 +2725,11 @@ export class GameScene extends Scene {
     // The cat played with the egg: the next level is a Gzhel level (one level only)
     const earnedGzhel = this.playerCollectedEasterEgg;
     // The UFO escaped: the next level has the alien at the base (an alien level is followed by a normal one)
-    const ufoEscaped = this.ufoEscapedThisLevel || (this.ufoSpawnedThisLevel && !this.ufoWasKilled);
+    const ufoEscaped = this.ufoEscapedThisLevel || this.ufos.length > 0;
     const nextAlienMode = ufoEscaped && !this.alienMode;
 
-    const friendTank = this.gzhelTank;
+    // Crazy mode brings new friends every level
+    const friendTank = CheatSettings.isCrazy ? undefined : this.friends.find((f) => f.isAlive);
     const friend: FriendCarry | null =
       friendTank && friendTank.isAlive
         ? {
@@ -2633,11 +2783,14 @@ export class GameScene extends Scene {
       new GameScene(this.size, {
         level: this.level,
         score: 0,
+        lives: GameScene.startLives(),
         sessionSeed: this.sessionSeed,
-        powerUps: this.keptAfterDeath(this.playerTank),
+        powerUps: GameScene.startPowerUps(this.keptAfterDeath(this.playerTank)),
         playerCount: this.playerCount,
-        player2PowerUps: this.player2Tank ? this.keptAfterDeath(this.player2Tank) : defaultPowerUps(),
+        player2Lives: GameScene.startLives(),
+        player2PowerUps: GameScene.startPowerUps(this.player2Tank ? this.keptAfterDeath(this.player2Tank) : defaultPowerUps()),
         continues: this.continues - 1,
+        startSteelBase: CheatSettings.active.steelBase,
       }),
     );
   }
@@ -2645,7 +2798,7 @@ export class GameScene extends Scene {
   /** NEW GAME: level 1 with a new map set and a full set of continues */
   private restartGame(): void {
     SoundManager.stopGameOver();
-    this.present(new GameScene(this.size, { level: 1, score: 0, playerCount: this.playerCount }));
+    this.present(GameScene.newGame(this.size, this.playerCount));
   }
 
   private goToMenu(): void {

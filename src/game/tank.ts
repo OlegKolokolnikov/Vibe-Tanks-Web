@@ -383,6 +383,9 @@ export class Tank extends Node {
   /** Shots still on the field. A machinegun burst counts as one shot. */
   activeBullets = 0;
   maxBullets = C.maxBulletsPerTank;
+  /** Cheat screen multipliers (1 = normal): movement speed and shooting speed */
+  cheatSpeed = 1;
+  cheatFireRate = 1;
   shootCooldown = 0;
 
   // Power-ups
@@ -717,7 +720,7 @@ export class Tank extends Node {
 
     const v = velocity(direction);
     const iceMultiplier = this.isOnIce ? this.iceSpeedBoost : 1.0;
-    const speed = this.moveSpeed * this.speedMultiplier * iceMultiplier;
+    const speed = this.moveSpeed * this.speedMultiplier * this.cheatSpeed * iceMultiplier;
     const newPosition = { x: this.position.x + v.dx * speed, y: this.position.y + v.dy * speed };
 
     let didMove = false;
@@ -761,7 +764,7 @@ export class Tank extends Node {
       return false;
     }
     const v = velocity(dir);
-    const slideSpeed = this.moveSpeed * this.speedMultiplier * this.iceSpeedBoost;
+    const slideSpeed = this.moveSpeed * this.speedMultiplier * this.cheatSpeed * this.iceSpeedBoost;
     const newPosition = { x: this.position.x + v.dx * slideSpeed, y: this.position.y + v.dy * slideSpeed };
 
     if (!map.checkTankCollision(newPosition, this.size.width, this.canMoveOnWater) && !this.collidesWithTanks(newPosition, allTanks)) {
@@ -796,7 +799,7 @@ export class Tank extends Node {
   /** Slide sideways toward the tile center to line up with a gap (max 0.5 px per frame) */
   private trySlideMove(direction: Direction, map: GameMap, allTanks: Tank[]): Point | null {
     const tileSize = C.tileSize;
-    const slideAmount = Math.min(this.moveSpeed * this.speedMultiplier, 0.5);
+    const slideAmount = Math.min(this.moveSpeed * this.speedMultiplier * this.cheatSpeed, 0.5);
     const tileCenterX = (Math.floor(this.position.x / tileSize) + 0.5) * tileSize;
     const tileCenterY = (Math.floor(this.position.y / tileSize) + 0.5) * tileSize;
     const offsetX = this.position.x - tileCenterX;
@@ -842,7 +845,8 @@ export class Tank extends Node {
     // 1 + machinegun power-ups + every 3rd defeated boss (max 4)
     const bulletCount = Math.min(1 + this.machinegunCount + this.bossExtraBullets, 4);
     // Cooldown reduced by stars and defeated bosses (min 5 frames)
-    this.shootCooldown = Math.max(5, 30 - (this.starCount + this.bossFireBoost) * C.fireBoostStep);
+    const baseCooldown = Math.max(5, 30 - (this.starCount + this.bossFireBoost) * C.fireBoostStep);
+    this.shootCooldown = this.cheatFireRate === 1 ? baseCooldown : Math.max(2, Math.round(baseCooldown / this.cheatFireRate));
 
     const bulletOffset = this.size.width / 2 + C.bulletSize / 2;
     const bulletSpacing = C.bulletSize * 2;

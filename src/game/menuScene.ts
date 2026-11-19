@@ -1,11 +1,14 @@
 import { Action } from "../engine/actions";
 import { Colors, rgb, white, withAlpha, type Color } from "../engine/color";
-import { randomInt, type Point } from "../engine/geometry";
+import { type Point } from "../engine/geometry";
 import { LabelNode, Node, ShapeNode } from "../engine/node";
 import { Path } from "../engine/path";
 import { Scene, type Touch } from "../engine/scene";
 import type { View } from "../engine/view";
+import { CheatScene } from "./cheatScene";
+import { CheatSettings } from "./cheatSettings";
 import { GameScene } from "./gameScene";
+import { SoundManager } from "./sound";
 import { OptionsScene } from "./optionsScene";
 
 type P = [number, number];
@@ -78,7 +81,16 @@ export function namedNodeAt(scene: Node, point: Point, accept: (name: string) =>
   return null;
 }
 
+/** ↑↑↓↓←→←→ B A on a keyboard; on a touch screen the same swipes, then two taps */
+type CodeInput = "up" | "down" | "left" | "right" | "b" | "a" | "tap";
+const DIRECTIONS: CodeInput[] = ["up", "up", "down", "down", "left", "right", "left", "right"];
+const KEYBOARD_CODE: CodeInput[] = [...DIRECTIONS, "b", "a"];
+const TOUCH_CODE: CodeInput[] = [...DIRECTIONS, "tap", "tap"];
+
 export class MenuScene extends Scene {
+  private codeInputs: CodeInput[] = [];
+  private touchStart: Point | null = null;
+
   didMove(_view: View): void {
     this.backgroundColor = Colors.black;
     const { width, height } = this.size;
@@ -107,11 +119,56 @@ export class MenuScene extends Scene {
     const options = createMenuButton("OPTIONS", { x: width / 2, y: height * 0.2 });
     options.name = "optionsButton";
     this.addChild(options);
+    if (CheatSettings.isUnlocked) this.addCheatsButton();
 
     const credits = new LabelNode("Designed by Oleg", "Helvetica-Bold");
     credits.fontSize = 14;
     credits.fontColor = Colors.lightGray;
     this.addChild(at(credits, width / 2, height * 0.03));
+  }
+
+  // MARK: - Konami code
+
+  private registerCodeInput(input: CodeInput): void {
+    if (CheatSettings.isUnlocked) return;
+    this.codeInputs.push(input);
+    if (this.codeInputs.length > KEYBOARD_CODE.length) this.codeInputs.shift();
+    const matches = (code: CodeInput[]) => code.length === this.codeInputs.length && code.every((c, i) => c === this.codeInputs[i]);
+    if (matches(KEYBOARD_CODE) || matches(TOUCH_CODE)) this.unlockCheats();
+  }
+
+  private unlockCheats(): void {
+    CheatSettings.isUnlocked = true;
+    this.codeInputs = [];
+    SoundManager.playPowerUp();
+    this.addCheatsButton();
+
+    const text = new LabelNode("CHEATS UNLOCKED!", "Helvetica-Bold");
+    text.fontSize = 28;
+    text.fontColor = Colors.magenta;
+    at(text, this.size.width / 2, this.size.height * 0.75 - 75);
+    text.setScale(0.2);
+    this.addChild(text);
+    text.run(
+      Action.sequence([Action.scaleTo(1.15, 0.25), Action.scaleTo(1.0, 0.1), Action.wait(1.8), Action.fadeOut(0.5), Action.removeFromParent()]),
+    );
+  }
+
+  /** OPTIONS moves left and CHEATS sits on its right */
+  private addCheatsButton(): void {
+    if (this.childNode("cheatsButton")) return;
+    const rowY = this.size.height * 0.2;
+    const options = this.childNode("optionsButton");
+    if (options) options.position = { x: this.size.width / 2 - 110, y: rowY };
+    const cheats = createMenuButton("CHEATS", { x: this.size.width / 2 + 110, y: rowY });
+    cheats.name = "cheatsButton";
+    const background = cheats.children[0] as ShapeNode | undefined;
+    if (background) background.strokeColor = Colors.magenta;
+    this.addChild(cheats);
+  }
+
+  private openCheats(): void {
+    this.view?.present(new CheatScene(this.size), 0.3);
   }
 
   touchesBegan(touches: Touch[]): void {
@@ -125,12 +182,41 @@ export class MenuScene extends Scene {
       case "optionsButton":
         this.view?.present(new OptionsScene(this.size), 0.3);
         return;
+      case "cheatsButton":
+        return this.openCheats();
     }
+    this.touchStart = { ...touch.location }; // Not on a button: a swipe or tap for the code
   }
 
-  /** Keyboard: Enter, Space or 1 = one player, 2 = two players */
+  touchesEnded(touches: Touch[]): void {
+    const start = this.touchStart;
+    const touch = touches[0];
+    this.touchStart = null;
+    if (!start || !touch) return;
+    const dx = touch.location.x - start.x;
+    const dy = touch.location.y - start.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 30) this.registerCodeInput("tap");
+    else if (Math.abs(dx) > Math.abs(dy)) this.registerCodeInput(dx > 0 ? "right" : "left");
+    else this.registerCodeInput(dy > 0 ? "up" : "down"); // Scene y goes up
+  }
+
+  touchesCancelled(_touches: Touch[]): void {
+    this.touchStart = null;
+  }
+
+  /** Keyboard: Enter, Space or 1 = one player, 2 = two players, C = cheats (once unlocked) */
   keyDown(code: string, repeat: boolean): boolean {
     if (repeat) return false;
+    const codeKeys: Record<string, CodeInput> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", KeyB: "b", KeyA: "a" };
+    if (codeKeys[code]) {
+      this.registerCodeInput(codeKeys[code]);
+      return code.startsWith("Arrow"); // Arrows would scroll the page
+    }
+    if (code === "KeyC" && CheatSettings.isUnlocked) {
+      this.openCheats();
+      return true;
+    }
+    this.codeInputs = [];
     switch (code) {
       case "Enter":
       case "NumpadEnter":
@@ -148,8 +234,8 @@ export class MenuScene extends Scene {
   }
 
   private startGame(playerCount: number): void {
-    // A new random session seed for this game session
-    this.view?.present(new GameScene(this.size, { level: 1, score: 0, sessionSeed: randomInt(1, 2 ** 31 - 1), playerCount }), 0.5);
+    // New random session seed; cheats may set the start level, lives and power-ups
+    this.view?.present(GameScene.newGame(this.size, playerCount), 0.5);
   }
 
   // MARK: - Decoration: tank in profile with a skull commander
