@@ -2,6 +2,7 @@ import { Action } from "../engine/actions";
 import { Colors, rgb, withAlpha, type Color } from "../engine/color";
 import type { Point } from "../engine/geometry";
 import { LabelNode, Node, ShapeNode } from "../engine/node";
+import { Path } from "../engine/path";
 import { C } from "./constants";
 import type { Tank } from "./tank";
 
@@ -20,6 +21,7 @@ export enum PowerUpType {
   Gold = "gold", // Gzhel-only: 99 points, enemies get major upgrade
   Laser = "laser", // Only dropped by the alien: shots of light pass through walls
   Magic = "magic", // Very rare: protects from the enemies' bomb and freeze
+  Cheese = "cheese", // Once on the boss bonus stage (the rat's): 11 extra lives and an invincible base until the level ends
   // Level-clear bonuses (appear when the last enemy dies)
   Strawberry = "strawberry", // +50 points
   Banana = "banana", // +75 points
@@ -61,6 +63,8 @@ export function colorForType(type: PowerUpType): Color {
       return rgb(0.0, 0.85, 0.85);
     case PowerUpType.Magic:
       return rgb(0.55, 0.2, 0.85);
+    case PowerUpType.Cheese:
+      return rgb(1.0, 0.82, 0.2);
     case PowerUpType.Strawberry:
       return Colors.red;
     case PowerUpType.Banana:
@@ -100,6 +104,8 @@ export function iconForType(type: PowerUpType): string {
       return "🔦";
     case PowerUpType.Magic:
       return "🔮";
+    case PowerUpType.Cheese:
+      return "🧀";
     case PowerUpType.Strawberry:
       return "🍓";
     case PowerUpType.Banana:
@@ -118,17 +124,17 @@ export class PowerUp extends Node {
   private blinkTimer = 0;
   readonly size = { width: 28, height: 28 };
 
-  /** Only players can take it (level-clear bonuses, the boss's question mark, magic), and the level waits for it */
+  /** Only players can take it (level-clear bonuses, the boss's question mark, magic, cheese), and the level waits for it */
   get isPlayersOnly(): boolean {
-    return isLevelBonus(this.type) || this.isMystery || this.type === PowerUpType.Magic;
+    return isLevelBonus(this.type) || this.isMystery || this.type === PowerUpType.Magic || this.type === PowerUpType.Cheese;
   }
 
   constructor(position: Point, type?: PowerUpType, mystery = false) {
     super();
     this.type = type ?? PowerUp.randomType();
     this.isMystery = mystery;
-    // Level-clear bonuses and the question mark stay until the level ends
-    this.lifetime = isLevelBonus(this.type) || mystery ? Number.MAX_SAFE_INTEGER : C.powerUpLifetime;
+    // Level-clear bonuses, the question mark and the cheese stay until the level ends
+    this.lifetime = isLevelBonus(this.type) || mystery || this.type === PowerUpType.Cheese ? Number.MAX_SAFE_INTEGER : C.powerUpLifetime;
     this.position = { ...position };
     this.zPosition = 8;
     this.drawPowerUp();
@@ -142,6 +148,8 @@ export class PowerUp extends Node {
       this.drawGoldBar();
     } else if (isLevelBonus(this.type)) {
       this.drawLevelBonus();
+    } else if (this.type === PowerUpType.Cheese) {
+      this.drawCheese();
     } else {
       const background = ShapeNode.rect(this.size.width, this.size.height, 4);
       background.fillColor = colorForType(this.type);
@@ -154,6 +162,45 @@ export class PowerUp extends Node {
       icon.verticalAlignmentMode = "center";
       this.addChild(icon);
     }
+  }
+
+  /** Yellow cheese wedge with holes and a pulsing golden glow */
+  private drawCheese(): void {
+    const glow = ShapeNode.circle(17);
+    glow.fillColor = rgb(1.0, 0.85, 0.2, 0.3);
+    glow.strokeColor = Colors.clear;
+    glow.zPosition = -1;
+    this.addChild(glow);
+    glow.run(Action.repeatForever(Action.sequence([Action.fadeAlpha(1.0, 0.4), Action.fadeAlpha(0.4, 0.4)])));
+
+    const rind = rgb(0.85, 0.6, 0.05);
+    const body = new ShapeNode(new Path().moveTo(-12, -8).lineTo(12, -8).lineTo(12, 4).lineTo(-12, -1).close());
+    body.fillColor = rgb(1.0, 0.82, 0.2);
+    body.strokeColor = rind;
+    body.lineWidth = 1.5;
+    this.addChild(body);
+
+    // Top face of the wedge
+    const top = new ShapeNode(new Path().moveTo(-12, -1).lineTo(12, 4).lineTo(9, 9).close());
+    top.fillColor = rgb(1.0, 0.92, 0.45);
+    top.strokeColor = rind;
+    top.lineWidth = 1.5;
+    this.addChild(top);
+
+    for (const [x, y, r] of [
+      [-5, -4, 2.2],
+      [3, -5, 1.6],
+      [7, -1, 2.0],
+      [0, -1, 1.2],
+    ]) {
+      const hole = ShapeNode.circle(r);
+      hole.fillColor = rind;
+      hole.strokeColor = Colors.clear;
+      hole.position = { x, y };
+      this.addChild(hole);
+    }
+
+    this.run(Action.repeatForever(Action.sequence([Action.scaleTo(1.12, 0.4), Action.scaleTo(1.0, 0.4)])));
   }
 
   /** Lode Runner style gold bar */
@@ -312,6 +359,9 @@ export class PowerUp extends Node {
         break;
       case PowerUpType.Magic:
         tank.hasMagic = true;
+        break;
+      case PowerUpType.Cheese:
+        tank.addLives(C.cheeseLivesBonus); // The invincible base is handled by the game scene
         break;
       case PowerUpType.Ball:
         tank.addBallSpeedBoost();

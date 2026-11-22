@@ -214,6 +214,11 @@ export class GameScene extends Scene {
   private goldSpawnedThisLevel = false;
   private goldSpawnTimer = 0;
   private readonly goldSpawnChance = 0.0003;
+  /** Cheese (boss bonus stage only, once): frame of the level it appears on, null for none */
+  private cheeseSpawnFrame: number | null = null;
+  private cheeseFrameCounter = 0;
+  /** Cheese taken: the base can't be destroyed until the level ends */
+  private baseInvincible = false;
   private ufoMessageLabel: LabelNode | null = null;
 
   /** Friends (Gzhel tanks): the Gzhel / returning friend, or a crowd in crazy mode */
@@ -411,7 +416,11 @@ export class GameScene extends Scene {
     const basePosition = { x: 13 * C.tileSize + C.tileSize / 2, y: (C.mapHeight - 1 - 24) * C.tileSize + C.tileSize / 2 };
     const isBossLevel = this.level % C.bossLevelInterval === 0;
     let resident: Resident;
-    if (this.bonusStage) resident = { kind: "woman", blond: isBossLevel };
+    if (this.bonusStage) {
+      resident = isBossLevel ? { kind: "rat" } : { kind: "woman" };
+      // The rat's stage hides a cheese that appears somewhere between 10 and 70 seconds in
+      if (isBossLevel) this.cheeseSpawnFrame = 600 + Math.floor(Math.random() * 3601);
+    }
     else if (this.alienMode) resident = { kind: "alien" };
     else if (isBossLevel) resident = { kind: "dog" };
     else resident = { kind: "cat" };
@@ -684,6 +693,7 @@ export class GameScene extends Scene {
     this.updateUFO();
     this.updateEasterEgg();
     this.updateGoldSpawn();
+    this.updateCheeseSpawn();
     this.checkAllCollisions();
     this.checkPowerUpCollisions();
     this.checkEasterEggCollisions();
@@ -1345,6 +1355,21 @@ export class GameScene extends Scene {
     if (Math.random() < this.goldSpawnChance) this.spawnGold();
   }
 
+  /** Boss bonus stage: the cheese appears once at its random moment
+   *  (or as soon as only a few enemies are left, so it never gets skipped) */
+  private updateCheeseSpawn(): void {
+    if (this.cheeseSpawnFrame === null || this.victoryDelayTimer !== 0) return;
+    this.cheeseFrameCounter += 1;
+    const enemiesLeft = this.enemySpawner.remainingEnemies + this.enemyTanks.filter((e) => e.isAlive).length;
+    if (this.cheeseFrameCounter < this.cheeseSpawnFrame && !(this.cheeseFrameCounter > 300 && enemiesLeft <= 3)) return;
+    this.cheeseSpawnFrame = null;
+    const cheese = new PowerUp(this.findRandomEmptyPosition(), PowerUpType.Cheese);
+    this.powerUps.push(cheese);
+    this.gameLayer.addChild(cheese);
+    this.showEffect("🧀 CHEESE!", Colors.yellow);
+    SoundManager.playPowerUpSpawn();
+  }
+
   private spawnGold(): void {
     this.goldSpawnedThisLevel = true;
     const gold = new PowerUp(this.findRandomEmptyPosition(), PowerUpType.Gold);
@@ -1505,8 +1530,9 @@ export class GameScene extends Scene {
     for (const bullet of this.bullets) {
       if (this.isBulletRemoved(bullet) || bullet.isLaser) continue;
       if (!this.base.checkCollision(bullet.position)) continue;
-      // The friend can't kill the base: its stray shots stop there harmlessly
-      if (bullet.isFromGzhel) {
+      // The friend can't kill the base: its stray shots stop there harmlessly.
+      // Nor can anyone once the cheese made the base invincible
+      if (bullet.isFromGzhel || this.baseInvincible) {
         this.removeBullet(bullet);
         continue;
       }
@@ -1679,7 +1705,7 @@ export class GameScene extends Scene {
         this.handleEnemyGoldCollection(enemy);
         break;
       default:
-        break; // Laser, level bonuses and magic: never collected by enemies
+        break; // Laser, level bonuses, magic and cheese: never collected by enemies
     }
   }
 
@@ -1799,6 +1825,12 @@ export class GameScene extends Scene {
         powerUp.applyTo(player);
         player.drawTank();
         this.showEffect(`+${C.ballPoints} GOAL! SPEED UP!`, Colors.white);
+        return;
+      case PowerUpType.Cheese:
+        powerUp.applyTo(player); // +11 lives
+        this.baseInvincible = true;
+        this.base.makeInvincible();
+        this.showEffect(`🧀 +${C.cheeseLivesBonus} LIVES! BASE INVINCIBLE!`, Colors.yellow);
         return;
       default:
         break;
@@ -2047,7 +2079,8 @@ export class GameScene extends Scene {
     this.showScoreBreakdown("LEVEL COMPLETE!", Colors.green, false, bonus);
 
     const resident = this.baseResident;
-    if (resident.kind === "woman") this.base.playCarPickupAnimation(resident.blond);
+    if (resident.kind === "woman") this.base.playCarPickupAnimation(false);
+    else if (resident.kind === "rat") this.base.playCarPickupAnimation(true);
     else if (resident.kind === "dog") this.base.playDogPeeAnimation();
     else if (this.alienMode) this.base.playAlienVictoryAnimation();
     else if (this.playerCollectedEasterEgg) this.base.playVictoryAnimation();

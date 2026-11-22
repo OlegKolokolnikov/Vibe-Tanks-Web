@@ -100,6 +100,7 @@ export const C = {
   // Easter Egg settings
   easterEggLifetime: 600, // 10 seconds
   easterEggLivesBonus: 3, // extra lives when player collects
+  cheeseLivesBonus: 11, // extra lives from the cheese on the boss bonus stage
 };
 
 /** Player 1 spawn / respawn point; player 2 mirrors it on the right side of the base */

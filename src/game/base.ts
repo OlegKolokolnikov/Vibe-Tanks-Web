@@ -7,7 +7,7 @@ import { C } from "./constants";
 import { GameState } from "./state";
 
 /** Who sits at the base */
-export type Resident = { kind: "cat" } | { kind: "alien" } | { kind: "woman"; blond: boolean } | { kind: "dog" };
+export type Resident = { kind: "cat" } | { kind: "alien" } | { kind: "woman" } | { kind: "rat" } | { kind: "dog" };
 
 const SKIN = rgb(1.0, 0.84, 0.72);
 
@@ -38,7 +38,7 @@ function line(x1: number, y1: number, x2: number, y2: number): Path {
   return new Path().moveTo(x1, y1).lineTo(x2, y2);
 }
 
-/** The base (cat, alien, woman or dog) that players must protect */
+/** The base (cat, alien, woman, rat or dog) that players must protect */
 export class Base extends Node {
   private isDestroyed = false;
   private readonly baseSize = C.tileSize; // Fits inside the protection walls
@@ -83,7 +83,10 @@ export class Base extends Node {
         this.drawAlien();
         return;
       case "woman":
-        this.drawWoman(this.resident.blond);
+        this.drawWoman();
+        return;
+      case "rat":
+        this.drawRat();
         return;
       case "dog":
         this.drawDog();
@@ -372,15 +375,20 @@ export class Base extends Node {
     );
   }
 
-  // MARK: Woman (bonus stage) and dog (boss levels)
+  // MARK: Woman and rat (bonus stage) and dog (boss levels)
 
-  /** Woman in a red polka-dot dress on a rug; black hair, or blond on a boss bonus stage */
-  private drawWoman(blond: boolean): void {
+  /** Purple rug with a gold edge that the woman or the rat sits on */
+  private addRug(): void {
     const rug = ellipse(this.baseSize * 0.95, this.baseSize * 0.55, { x: 0, y: -10 }, rgb(0.55, 0.25, 0.6), rgb(0.95, 0.8, 0.3));
     rug.name = "cushion";
     this.addChild(rug);
+  }
 
-    const hair = blond ? rgb(0.98, 0.84, 0.38) : rgb(0.08, 0.06, 0.06);
+  /** Woman with black hair in a red polka-dot dress on a rug */
+  private drawWoman(): void {
+    this.addRug();
+
+    const hair = rgb(0.08, 0.06, 0.06);
     const woman = new Node();
     woman.name = "resident";
 
@@ -440,6 +448,86 @@ export class Base extends Node {
     );
   }
 
+  /** Grey rat sitting up on the rug (boss bonus stage), twitching its whiskers */
+  private drawRat(): void {
+    this.addRug();
+
+    const fur = rgb(0.58, 0.58, 0.62);
+    const darkFur = rgb(0.35, 0.35, 0.4);
+    const lightFur = rgb(0.82, 0.82, 0.85);
+    const pink = rgb(1.0, 0.62, 0.7);
+    const rat = new Node();
+    rat.name = "resident";
+
+    // Long bare tail curling up beside the body
+    const tail = shape(new Path().moveTo(4, -12).quadTo(14, -14, 13, -6).quadTo(12, -1, 11, 3), Colors.clear, pink, 1.6);
+    tail.lineCap = "round";
+    rat.addChild(tail);
+
+    // Body, belly, feet, little front paws
+    rat.addChild(ellipse(14, 16, { x: 0, y: -6 }, fur, darkFur));
+    rat.addChild(ellipse(8, 10, { x: 0, y: -7 }, lightFur));
+    rat.addChild(ellipse(4.5, 2.5, { x: -3.5, y: -14 }, pink));
+    rat.addChild(ellipse(4.5, 2.5, { x: 3.5, y: -14 }, pink));
+    rat.addChild(ellipse(2.8, 2.6, { x: -2.6, y: -3.5 }, pink));
+    rat.addChild(ellipse(2.8, 2.6, { x: 2.6, y: -3.5 }, pink));
+
+    // Big round ears with pink insides
+    for (const x of [-6, 6]) {
+      rat.addChild(ellipse(8, 8, { x, y: 10 }, fur, darkFur));
+      rat.addChild(ellipse(5, 5, { x, y: 10 }, pink));
+    }
+
+    // Head, snout, buck teeth, nose, eyes
+    rat.addChild(ellipse(12, 11, { x: 0, y: 5 }, fur, darkFur));
+    rat.addChild(ellipse(6, 5, { x: 0, y: 1.8 }, lightFur));
+    const teeth = ShapeNode.rect(2, 1.6);
+    teeth.fillColor = Colors.white;
+    teeth.strokeColor = Colors.clear;
+    teeth.position = { x: 0, y: -0.4 };
+    rat.addChild(teeth);
+    rat.addChild(ellipse(2.4, 1.8, { x: 0, y: 1.4 }, rgb(0.95, 0.4, 0.5)));
+    for (const x of [-2.4, 2.4]) {
+      rat.addChild(ellipse(1.9, 2.3, { x, y: 6.3 }, Colors.black));
+      rat.addChild(ellipse(0.7, 0.7, { x: x + 0.4, y: 6.9 }, Colors.white));
+    }
+
+    // Whiskers
+    const whiskerPath = new Path();
+    for (const side of [-1, 1]) {
+      whiskerPath.moveTo(side * 2, 1.6).lineTo(side * 8.5, 3.2);
+      whiskerPath.moveTo(side * 2, 1.2).lineTo(side * 8.5, 0.2);
+    }
+    const whiskers = shape(whiskerPath, Colors.clear, rgb(0.15, 0.15, 0.15, 0.8), 0.6);
+    rat.addChild(whiskers);
+
+    rat.position = { x: 0, y: 2 };
+    this.addChild(rat);
+    this.catNode = rat;
+
+    // Idle: a gentle sway, and a quick sniff now and then
+    rat.run(Action.repeatForever(Action.sequence([Action.rotateTo(0.05, 1.2), Action.rotateTo(-0.05, 1.2)])));
+    whiskers.run(
+      Action.repeatForever(
+        Action.sequence([Action.wait(1.8), Action.repeat(Action.sequence([Action.moveBy(0, 0.8, 0.07), Action.moveBy(0, -0.8, 0.07)]), 4)]),
+      ),
+    );
+  }
+
+  /** Cheese taken: a pulsing golden ring shows the base can't be destroyed until the level ends */
+  makeInvincible(): void {
+    if (this.isDestroyed || this.childNode("invincibleGlow")) return;
+    const ring = ShapeNode.rect(this.baseSize + 6, this.baseSize + 6, 6);
+    ring.fillColor = rgb(1.0, 0.85, 0.2, 0.15);
+    ring.strokeColor = rgb(1.0, 0.85, 0.2);
+    ring.lineWidth = 2;
+    ring.glowWidth = 3;
+    ring.zPosition = -1;
+    ring.name = "invincibleGlow";
+    this.addChild(ring);
+    ring.run(Action.repeatForever(Action.sequence([Action.fadeAlpha(0.35, 0.5), Action.fadeAlpha(1.0, 0.5)])));
+  }
+
   /** Dog sitting on a blue bed, wagging its tail */
   private drawDog(): void {
     const bed = ellipse(this.baseSize * 0.9, this.baseSize * 0.65, { x: 0, y: -4 }, rgb(0.3, 0.5, 0.85), rgb(0.15, 0.3, 0.6));
@@ -490,8 +578,8 @@ export class Base extends Node {
     tail.run(Action.repeatForever(Action.sequence([Action.rotateTo(0.5, 0.18), Action.rotateTo(-0.3, 0.18)])));
   }
 
-  /** Bonus stage cleared: a car drives up, the woman gets in and they drive off */
-  playCarPickupAnimation(blond: boolean): void {
+  /** Bonus stage cleared: a car drives up, the woman (red car) or the rat (pink car) gets in and they drive off */
+  playCarPickupAnimation(pink: boolean): void {
     const woman = this.catNode;
     if (!woman || this.isDestroyed) return;
     woman.removeAllActions();
@@ -499,7 +587,7 @@ export class Base extends Node {
 
     const car = new Node();
     car.zPosition = 30;
-    const paint = blond ? rgb(1.0, 0.45, 0.7) : rgb(0.85, 0.08, 0.1);
+    const paint = pink ? rgb(1.0, 0.45, 0.7) : rgb(0.85, 0.08, 0.1);
     car.addChild(shape(new Path().roundRect(-18, -5, 36, 11, 4), paint, darker(paint), 1.5));
     car.addChild(shape(new Path().roundRect(-10, 5, 19, 9, 4), paint, darker(paint), 1.5));
     car.addChild(shape(new Path().roundRect(-8, 6.5, 15, 6, 2), rgb(0.7, 0.9, 1.0)));
