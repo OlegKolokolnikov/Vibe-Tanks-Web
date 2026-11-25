@@ -26,11 +26,19 @@ export enum PowerUpType {
   Strawberry = "strawberry", // +50 points
   Banana = "banana", // +75 points
   Ball = "ball", // +90 points and faster start speed for the rest of the game
+  Watermelon = "watermelon", // Level won within a minute: +55 points and an extra life
+  Icecream = "icecream", // Level won faster than the previous one: +33 points and a machinegun
 }
 
 /** Level-clear bonus items: only players can pick them up */
 export function isLevelBonus(type: PowerUpType): boolean {
-  return type === PowerUpType.Strawberry || type === PowerUpType.Banana || type === PowerUpType.Ball;
+  return (
+    type === PowerUpType.Strawberry ||
+    type === PowerUpType.Banana ||
+    type === PowerUpType.Ball ||
+    type === PowerUpType.Watermelon ||
+    type === PowerUpType.Icecream
+  );
 }
 
 export function colorForType(type: PowerUpType): Color {
@@ -71,6 +79,10 @@ export function colorForType(type: PowerUpType): Color {
       return Colors.yellow;
     case PowerUpType.Ball:
       return Colors.white;
+    case PowerUpType.Watermelon:
+      return Colors.green;
+    case PowerUpType.Icecream:
+      return rgb(1.0, 0.6, 0.8);
   }
 }
 
@@ -112,6 +124,10 @@ export function iconForType(type: PowerUpType): string {
       return "🍌";
     case PowerUpType.Ball:
       return "⚽";
+    case PowerUpType.Watermelon:
+      return "🍉";
+    case PowerUpType.Icecream:
+      return "🍦";
   }
 }
 
@@ -272,6 +288,14 @@ export class PowerUp extends Node {
         glowColor = Colors.yellow;
         iconSize = 22;
         break;
+      case PowerUpType.Watermelon:
+        glowColor = Colors.green;
+        iconSize = 22;
+        break;
+      case PowerUpType.Icecream:
+        glowColor = rgb(1.0, 0.6, 0.8);
+        iconSize = 22;
+        break;
       default:
         glowColor = Colors.white;
         iconSize = 22;
@@ -365,6 +389,12 @@ export class PowerUp extends Node {
         break;
       case PowerUpType.Ball:
         tank.addBallSpeedBoost();
+        break;
+      case PowerUpType.Watermelon:
+        tank.addLives(1);
+        break;
+      case PowerUpType.Icecream:
+        tank.machinegunCount = Math.min(tank.machinegunCount + 1, 3);
         break;
       default:
         // Shovel, freeze, bomb, gold, fruit: handled by the game scene

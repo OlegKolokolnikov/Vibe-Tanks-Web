@@ -89,6 +89,8 @@ export interface GameSceneOptions {
   gzhelStreak?: number;
   bonusStage?: boolean;
   continues?: number;
+  /** How long the previous level took to win (frames) */
+  previousLevelFrames?: number;
   /** Cheats: base starts behind steel */
   startSteelBase?: boolean;
 }
@@ -262,6 +264,10 @@ export class GameScene extends Scene {
   playerFreezeTimers = [0, 0];
   private victoryDelayTimer = 0;
   private bombUsedThisLevel = false;
+  /** Frames played this level until the last enemy died (paused time doesn't count) */
+  private levelFrames = 0;
+  /** How long the previous level took to win (null on the first level or after a continue) */
+  private readonly previousLevelFrames: number | null;
   private levelBonusesSpawned = false;
 
   baseProtectionTimer = 0;
@@ -312,6 +318,7 @@ export class GameScene extends Scene {
   constructor(size: Size, options: GameSceneOptions = {}) {
     super(size);
     this.continues = options.continues ?? C.startingContinues;
+    this.previousLevelFrames = options.previousLevelFrames ?? null;
     this.startSteelBase = options.startSteelBase ?? false;
     this.returningFriend = options.friend ?? null;
     this.gzhelStreak = options.gzhelStreak ?? 0;
@@ -667,6 +674,9 @@ export class GameScene extends Scene {
         if (this.playerFreezeTimers[index] === 0) player.childNode("freezeEffect")?.removeFromParent();
       }
     }
+
+    // Level clock stops once the last enemy is down
+    if (this.victoryDelayTimer === 0) this.levelFrames += 1;
 
     if (this.victoryDelayTimer > 0) {
       this.victoryDelayTimer -= 1;
@@ -1826,6 +1836,17 @@ export class GameScene extends Scene {
         player.drawTank();
         this.showEffect(`+${C.ballPoints} GOAL! SPEED UP!`, Colors.white);
         return;
+      case PowerUpType.Watermelon:
+        this.addScore(C.watermelonPoints, player);
+        powerUp.applyTo(player); // +1 life
+        this.showEffect(`🍉 +${C.watermelonPoints} +1 LIFE! ${this.formatLevelTime(this.levelFrames)}`, Colors.green);
+        return;
+      case PowerUpType.Icecream:
+        this.addScore(C.icecreamPoints, player);
+        powerUp.applyTo(player); // +1 machinegun
+        player.drawTank();
+        this.showEffect(`🍦 +${C.icecreamPoints} MACHINEGUN! FASTER THAN LAST LEVEL!`, rgb(1.0, 0.6, 0.8));
+        return;
       case PowerUpType.Cheese:
         powerUp.applyTo(player); // +11 lives
         this.baseInvincible = true;
@@ -1969,7 +1990,14 @@ export class GameScene extends Scene {
     }
   }
 
-  /** Level cleared: strawberry for crossing 250 points this level, banana for 500, ball for a clean level */
+  /** Level time as m:ss */
+  private formatLevelTime(frames: number): string {
+    const seconds = Math.floor(frames / 60);
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  /** Level cleared: strawberry for crossing 250 points this level, banana for 500, ball for a clean level,
+   *  watermelon when won within a minute, ice cream when won faster than the previous level */
   private spawnLevelBonuses(): boolean {
     const bonuses: PowerUpType[] = [];
     for (let i = 0; i < this.playerCount; i++) {
@@ -1980,6 +2008,9 @@ export class GameScene extends Scene {
     }
     const playerDied = this.playerTanks.some((p) => p.deathsThisLevel > 0);
     if (!this.bombUsedThisLevel && !playerDied) bonuses.push(PowerUpType.Ball);
+    // Speed bonuses: watermelon for winning within a minute, ice cream for beating the previous level's time
+    if (this.levelFrames <= C.watermelonTimeLimit) bonuses.push(PowerUpType.Watermelon);
+    if (this.previousLevelFrames !== null && this.levelFrames < this.previousLevelFrames) bonuses.push(PowerUpType.Icecream);
     for (const type of bonuses) this.spawnPowerUp(type);
     this.levelBonusesSpawned = bonuses.length > 0;
     return this.levelBonusesSpawned;
@@ -2799,6 +2830,7 @@ export class GameScene extends Scene {
         gzhelStreak: streak,
         bonusStage: nextIsBonus,
         continues: this.continues,
+        previousLevelFrames: this.levelFrames,
       }),
     );
   }

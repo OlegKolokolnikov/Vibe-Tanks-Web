@@ -79,6 +79,9 @@ export const C = {
   strawberryPoints: 50,
   bananaPoints: 75,
   ballPoints: 90,
+  watermelonPoints: 55,
+  icecreamPoints: 33,
+  watermelonTimeLimit: 3600, // Level won within 1 minute (frames)
   ballSpeedBoost: 0.15, // Start speed per ball
   ballMaxBaseSpeed: 1.6, // Start speed cap
   levelBonusVictoryDelay: 720, // 12 seconds to grab the bonuses
