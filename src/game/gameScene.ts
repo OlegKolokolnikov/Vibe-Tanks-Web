@@ -453,11 +453,12 @@ export class GameScene extends Scene {
       if (cheats.enemiesOnScreen > 0) maxOnScreen = cheats.enemiesOnScreen;
     }
 
-    // Returning friend a second after the start; the Gzhel friend 10-40 seconds in
-    if (this.returningFriend) this.pendingFriends.push({ carry: this.returningFriend, hits: null, frame: 60 });
-    else if (this.showGzhelBorder) this.pendingFriends.push({ carry: null, hits: null, frame: randomInt(600, 2400) });
+    // Returning friend a second after the start; the Gzhel friend 10-40 seconds in.
+    // No friends on the bonus stage: a returning friend waits for the next level.
+    if (!this.bonusStage && this.returningFriend) this.pendingFriends.push({ carry: this.returningFriend, hits: null, frame: 60 });
+    else if (!this.bonusStage && this.showGzhelBorder) this.pendingFriends.push({ carry: null, hits: null, frame: randomInt(600, 2400) });
     // Crazy mode: a random crowd of friends, each with 1-5 hits
-    if (cheats.crazyMode) {
+    if (cheats.crazyMode && !this.bonusStage) {
       const count = randomInt(1, 6);
       for (let i = 0; i < count; i++) this.pendingFriends.push({ carry: null, hits: randomInt(1, 5), frame: 90 + i * 40 });
     }
@@ -1997,7 +1998,8 @@ export class GameScene extends Scene {
   }
 
   /** Level cleared: strawberry for crossing 250 points this level, banana for 500, ball for a clean level,
-   *  watermelon when won within a minute, ice cream when won faster than the previous level */
+   *  watermelon when won within a minute, ice cream when won faster than the previous level.
+   *  When several are earned only one random bonus appears. */
   private spawnLevelBonuses(): boolean {
     const bonuses: PowerUpType[] = [];
     for (let i = 0; i < this.playerCount; i++) {
@@ -2011,7 +2013,7 @@ export class GameScene extends Scene {
     // Speed bonuses: watermelon for winning within a minute, ice cream for beating the previous level's time
     if (this.levelFrames <= C.watermelonTimeLimit) bonuses.push(PowerUpType.Watermelon);
     if (this.previousLevelFrames !== null && this.levelFrames < this.previousLevelFrames) bonuses.push(PowerUpType.Icecream);
-    for (const type of bonuses) this.spawnPowerUp(type);
+    if (bonuses.length > 0) this.spawnPowerUp(bonuses[randomInt(0, bonuses.length - 1)]);
     this.levelBonusesSpawned = bonuses.length > 0;
     return this.levelBonusesSpawned;
   }
@@ -2794,7 +2796,7 @@ export class GameScene extends Scene {
 
     // Crazy mode brings new friends every level
     const friendTank = CheatSettings.isCrazy ? undefined : this.friends.find((f) => f.isAlive);
-    const friend: FriendCarry | null =
+    let friend: FriendCarry | null =
       friendTank && friendTank.isAlive
         ? {
             health: friendTank.health,
@@ -2807,6 +2809,8 @@ export class GameScene extends Scene {
             canDestroyTrees: friendTank.canDestroyTrees,
           }
         : null;
+    // The friend sat out the bonus stage: it comes back on the level after it
+    if (this.bonusStage && !CheatSettings.isCrazy) friend = this.returningFriend;
 
     // Five Gzhel levels in a row open the secret Gorodets bonus stage
     let streak = this.showGzhelBorder ? this.gzhelStreak + 1 : 0;
