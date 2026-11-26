@@ -1,4 +1,5 @@
 import { Action } from "../engine/actions";
+import { AlienEyes } from "./alienEyes";
 import { Colors, hsb, rgb, white, withAlpha, type Color } from "../engine/color";
 import { stroke, fill, fillEllipse } from "../engine/draw";
 import { distance, randomElement, randomIn, randomInt, type Point, type Size } from "../engine/geometry";
@@ -292,6 +293,8 @@ export class GameScene extends Scene {
 
   private readonly showGzhelBorder: boolean;
   private readonly alienMode: boolean;
+  /** Red-alien levels: eyes opening on the black tiles (decoration) */
+  private alienEyes: AlienEyes | null = null;
   private baseResident: Resident = { kind: "cat" };
   private magicSpawnedThisLevel = false;
   private readonly gzhelStreak: number;
@@ -434,6 +437,10 @@ export class GameScene extends Scene {
     this.baseResident = resident;
     this.base = new Base(basePosition, resident, this.alienMode && isBossLevel);
     this.gameLayer.addChild(this.base);
+    if (this.alienMode && isBossLevel && !this.bonusStage) {
+      this.alienEyes = new AlienEyes();
+      this.gameMap.addChild(this.alienEyes);
+    }
 
     this.playerTank = this.makePlayerTank(1, this.initialLives, this.initialPowerUps);
     if (this.isTwoPlayer) this.player2Tank = this.makePlayerTank(2, this.initialLives2, this.initialPowerUps2);
@@ -705,6 +712,8 @@ export class GameScene extends Scene {
     this.updateEasterEgg();
     this.updateGoldSpawn();
     this.updateCheeseSpawn();
+    this.alienEyes?.update(this.gameMap, this.allTanks,
+      this.bullets.filter((b) => !b.isFromEnemy && !b.isFromGzhel && !this.isBulletRemoved(b)));
     this.checkAllCollisions();
     this.checkPowerUpCollisions();
     this.checkEasterEggCollisions();
