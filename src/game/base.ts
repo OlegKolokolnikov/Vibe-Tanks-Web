@@ -44,10 +44,13 @@ export class Base extends Node {
   private readonly baseSize = C.tileSize; // Fits inside the protection walls
   private catNode: Node | null = null;
   private readonly resident: Resident;
+  /** Red alien instead of the green one (alien mode on a boss level) */
+  private readonly isRedAlien: boolean;
 
-  constructor(position: Point, resident: Resident = { kind: "cat" }) {
+  constructor(position: Point, resident: Resident = { kind: "cat" }, redAlien = false) {
     super();
     this.resident = resident;
+    this.isRedAlien = redAlien;
     this.position = { ...position };
     this.zPosition = 5;
     this.drawBase();
@@ -266,8 +269,8 @@ export class Base extends Node {
   // MARK: Alien
 
   private drawAlien(): void {
-    const alienGreen = rgb(0.4, 0.9, 0.4);
-    const alienDark = rgb(0.2, 0.6, 0.2);
+    const alienGreen = this.isRedAlien ? rgb(0.95, 0.3, 0.3) : rgb(0.4, 0.9, 0.4);
+    const alienDark = this.isRedAlien ? rgb(0.65, 0.12, 0.12) : rgb(0.2, 0.6, 0.2);
 
     // Small spaceship pad
     const pad = ellipse(this.baseSize * 0.8, this.baseSize * 0.4, { x: 0, y: -8 }, rgb(0.3, 0.3, 0.4), rgb(0.5, 0.5, 0.6));

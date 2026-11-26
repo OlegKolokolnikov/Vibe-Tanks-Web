@@ -432,7 +432,7 @@ export class GameScene extends Scene {
     else if (isBossLevel) resident = { kind: "dog" };
     else resident = { kind: "cat" };
     this.baseResident = resident;
-    this.base = new Base(basePosition, resident);
+    this.base = new Base(basePosition, resident, this.alienMode && isBossLevel);
     this.gameLayer.addChild(this.base);
 
     this.playerTank = this.makePlayerTank(1, this.initialLives, this.initialPowerUps);
