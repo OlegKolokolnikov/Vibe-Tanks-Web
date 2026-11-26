@@ -300,7 +300,7 @@ export class GameScene extends Scene {
 
   private readonly showGzhelBorder: boolean;
   private readonly alienMode: boolean;
-  /** Red-alien levels: eyes opening on the black tiles (decoration) */
+  /** Alien levels: eyes (red alien) or stars (green alien) on the black tiles (decoration) */
   private alienEyes: AlienEyes | null = null;
   private baseResident: Resident = { kind: "cat" };
   private magicSpawnedThisLevel = false;
@@ -454,8 +454,8 @@ export class GameScene extends Scene {
     this.baseResident = resident;
     this.base = new Base(basePosition, resident, this.alienMode && isBossLevel);
     this.gameLayer.addChild(this.base);
-    if (this.alienMode && isBossLevel && !this.bonusStage) {
-      this.alienEyes = new AlienEyes();
+    if (this.alienMode && !this.bonusStage) {
+      this.alienEyes = new AlienEyes(!isBossLevel);
       this.gameMap.addChild(this.alienEyes);
     }
 

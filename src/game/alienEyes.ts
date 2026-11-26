@@ -1,7 +1,8 @@
 import { Action } from "../engine/actions";
-import { Colors, rgb, white } from "../engine/color";
+import { Colors, rgb, white, withAlpha } from "../engine/color";
 import { randomElement, randomIn, randomInt, type Point } from "../engine/geometry";
 import { Node, ShapeNode } from "../engine/node";
+import { Path } from "../engine/path";
 import type { Bullet } from "./bullet";
 import { C } from "./constants";
 import { Tile, type GameMap } from "./map";
@@ -14,16 +15,18 @@ function near(a: Point, b: Point, distance: number): boolean {
 }
 
 /**
- * Red-alien levels: eyes open and close on random empty (black) tiles.
- * Pure decoration: they block nothing, and a player's bullet makes an eye shut at once
- * (the bullet flies on). At most three are open at a time; one eye per level may be red.
+ * Alien levels: on random empty (black) tiles, eyes open and close (red alien)
+ * or small stars twinkle (green alien). Pure decoration: they block nothing, and a player's
+ * bullet makes one go away at once (the bullet flies on). At most three at a time;
+ * one eye per level may be red, stars come in white, yellow, red and blue.
  */
 export class AlienEyes extends Node {
-  private eyes: AlienEye[] = [];
+  private eyes: AlienDecoration[] = [];
   private spawnTimer = randomInt(60, 600);
   private redEyeUsed = false;
 
-  constructor() {
+  /** stars: stars instead of eyes (green alien) */
+  constructor(private readonly stars = false) {
     super();
     this.zPosition = 1; // Under tanks (10), bullets (5) and forest (15)
   }
@@ -46,10 +49,15 @@ export class AlienEyes extends Node {
     const spot = this.randomSpot(map, tanks);
     if (!spot) return;
 
-    // One red eye per level at most, at a random moment
-    const red = !this.redEyeUsed && randomInt(1, 4) === 1;
-    if (red) this.redEyeUsed = true;
-    const eye = new AlienEye(red);
+    let eye: AlienDecoration;
+    if (this.stars) {
+      eye = new AlienStar();
+    } else {
+      // One red eye per level at most, at a random moment
+      const red = !this.redEyeUsed && randomInt(1, 4) === 1;
+      if (red) this.redEyeUsed = true;
+      eye = new AlienEye(red);
+    }
     eye.position = spot;
     this.addChild(eye);
     this.eyes.push(eye);
@@ -75,11 +83,72 @@ export class AlienEyes extends Node {
   }
 }
 
+/** One eye or star: appears, lives a few seconds, goes away (at once when shot) */
+abstract class AlienDecoration extends Node {
+  isClosing = false;
+  abstract open(): void;
+  abstract close(fast: boolean): void;
+}
+
+/** A small star: pops up, twinkles, fades out */
+class AlienStar extends AlienDecoration {
+  private readonly star: ShapeNode;
+
+  constructor() {
+    super();
+    const outer = C.tileSize * randomIn(0.18, 0.28);
+    const inner = outer * 0.4;
+    const path = new Path();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? outer : inner;
+      const angle = (i * Math.PI) / 5 + Math.PI / 2;
+      if (i === 0) path.moveTo(Math.cos(angle) * r, Math.sin(angle) * r);
+      else path.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+    }
+    path.close();
+    this.star = new ShapeNode(path);
+    const color = randomElement([Colors.white, rgb(1, 0.9, 0.2), rgb(1, 0.25, 0.25), rgb(0.35, 0.6, 1)])!;
+    this.star.fillColor = color;
+    this.star.strokeColor = withAlpha(color, 0.5);
+    this.star.lineWidth = 1;
+    this.star.glowWidth = 1.5;
+    this.star.setScale(0.01);
+    this.star.zRotation = randomIn(0, (2 * Math.PI) / 5);
+    this.addChild(this.star);
+  }
+
+  open(): void {
+    const life = randomIn(2, 6);
+    const twinkle = Action.repeatForever(Action.sequence([
+      Action.group([Action.scaleTo(0.6, 0.35), Action.fadeAlpha(0.55, 0.35)]),
+      Action.group([Action.scaleTo(1, 0.35), Action.fadeAlpha(1, 0.35)]),
+    ]));
+    this.star.run(Action.repeatForever(Action.rotateBy(Math.PI / 3, 1)), "spin");
+    this.star.run(Action.sequence([
+      Action.scaleTo(1, 0.3).ease("easeOut"),
+      Action.run(() => this.star.run(twinkle, "twinkle")),
+      Action.wait(life),
+      Action.run(() => this.close(false)),
+    ]), "life");
+  }
+
+  close(fast: boolean): void {
+    if (this.isClosing) return;
+    this.isClosing = true;
+    this.star.removeAction("life");
+    this.star.removeAction("twinkle");
+    const t = fast ? 0.08 : 0.4;
+    this.star.run(Action.sequence([
+      Action.group([Action.scaleTo(0.01, t), Action.fadeAlpha(0, t)]),
+      Action.run(() => this.removeFromParent()),
+    ]));
+  }
+}
+
 /** One eye: opens, looks around, blinks maybe, closes and goes away */
-class AlienEye extends Node {
+class AlienEye extends AlienDecoration {
   private readonly lid = new Node(); // Scaled vertically to open/close the eye
   private readonly pupil: ShapeNode;
-  isClosing = false;
 
   constructor(red: boolean) {
     super();
