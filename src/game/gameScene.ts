@@ -10,7 +10,7 @@ import type { View } from "../engine/view";
 import { Base, type Resident } from "./base";
 import { makeGorodetsBorder, makeGzhelBorder, makeKhokhlomaBorder } from "./borders";
 import type { Bullet } from "./bullet";
-import { CheatSettings } from "./cheatSettings";
+import { CheatSettings, applyForce } from "./cheatSettings";
 import { C, EnemyType, boxesOverlap, scoreForEnemyType, spawnPosition } from "./constants";
 import { Direction } from "./direction";
 import { EasterEgg } from "./easterEgg";
@@ -118,8 +118,15 @@ const BUTTON_HEIGHT = 45;
 let consecutiveLosses = 0;
 function setConsecutiveLosses(value: number): void {
   consecutiveLosses = value;
-  GameState.isEasyMode = consecutiveLosses >= 3;
+  GameState.isEasyMode = isEasyMode();
 }
+
+/** Easy mode after 3 losses in a row (cheats can force it or switch it off) */
+function isEasyMode(): boolean {
+  return applyForce(CheatSettings.active.easyLevel, consecutiveLosses >= 3, isCheatFirstLevel);
+}
+/** This level is the first of the game (the cheat start level): ONCE cheats apply here only */
+let isCheatFirstLevel = false;
 
 let lightningBoltTexture: Texture | null = null;
 let spawnFlashTexture: Texture | null = null;
@@ -325,7 +332,6 @@ export class GameScene extends Scene {
     this.startSteelBase = options.startSteelBase ?? false;
     this.returningFriend = options.friend ?? null;
     this.gzhelStreak = options.gzhelStreak ?? 0;
-    this.bonusStage = options.bonusStage ?? false;
     this.level = options.level ?? 1;
     this.scores = [options.score ?? 0, options.player2Score ?? 0];
     this.initialLives = options.lives ?? 3;
@@ -333,9 +339,20 @@ export class GameScene extends Scene {
     this.playerCount = options.playerCount === 2 ? 2 : 1;
     this.initialLives2 = options.player2Lives ?? 3;
     this.initialPowerUps2 = options.player2PowerUps ?? defaultPowerUps();
-    this.showGzhelBorder = options.gzhelBorder ?? false;
-    this.alienMode = options.alienMode ?? false;
+    // Cheats can force a level kind on every level or switch it off
+    const cheats = CheatSettings.active;
+    const first = this.level === cheats.startLevel;
+    isCheatFirstLevel = first;
+    this.bonusStage = applyForce(cheats.bonusLevel, options.bonusStage ?? false, first);
+    this.showGzhelBorder = !this.bonusStage && applyForce(cheats.gzhelLevel, options.gzhelBorder ?? false, first);
+    this.alienMode = applyForce(cheats.alienLevel, options.alienMode ?? false, first);
     this.sessionSeed = options.sessionSeed || randomInt(1, 2 ** 31 - 1);
+  }
+
+  /** The boss comes as the last tank of every 10th level (cheats can force it or switch it off) */
+  private get isBossLevel(): boolean {
+    const cheats = CheatSettings.active;
+    return applyForce(cheats.bossLevel, this.level % C.bossLevelInterval === 0, this.level === cheats.startLevel);
   }
 
   private get cs(): number {
@@ -400,7 +417,7 @@ export class GameScene extends Scene {
     GameState.isGzhelActive = this.showGzhelBorder;
     GameState.isAlienModeActive = this.alienMode;
     GameState.isBirdStage = this.bonusStage;
-    GameState.isEasyMode = consecutiveLosses >= 3;
+    GameState.isEasyMode = isEasyMode();
     if (this.bonusStage) this.gameLayer.addChild(makeGorodetsBorder());
     else if (this.showGzhelBorder) this.gameLayer.addChild(makeGzhelBorder());
     else if (this.alienMode) this.gameLayer.addChild(makeKhokhlomaBorder());
@@ -424,7 +441,7 @@ export class GameScene extends Scene {
 
     // Base in col 13, row 24 (matching the protection gap)
     const basePosition = { x: 13 * C.tileSize + C.tileSize / 2, y: (C.mapHeight - 1 - 24) * C.tileSize + C.tileSize / 2 };
-    const isBossLevel = this.level % C.bossLevelInterval === 0;
+    const isBossLevel = this.isBossLevel;
     let resident: Resident;
     if (this.bonusStage) {
       resident = isBossLevel ? { kind: "rat" } : { kind: "woman" };
@@ -468,6 +485,14 @@ export class GameScene extends Scene {
     if (cheats.crazyMode && !this.bonusStage) {
       const count = randomInt(1, 6);
       for (let i = 0; i < count; i++) this.pendingFriends.push({ carry: null, hits: randomInt(1, 5), frame: 90 + i * 40 });
+    }
+
+    // Cheat: a friend on every level (even the bonus stage), or no friends at all
+    const friendForced = cheats.friendLevel === "always" || (cheats.friendLevel === "once" && this.level === cheats.startLevel);
+    if (friendForced && !this.pendingFriends.length) {
+      this.pendingFriends.push({ carry: null, hits: null, frame: randomInt(120, 600) });
+    } else if (cheats.friendLevel === "never") {
+      this.pendingFriends = [];
     }
 
     // More tanks on screen: they come in faster

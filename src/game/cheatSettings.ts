@@ -2,6 +2,22 @@
  * Cheats, unlocked with the Konami code on the start menu (↑↑↓↓←→←→ B A, or the same swipes + two taps).
  * The settings are saved, but they only take effect after the code is entered (once per page load).
  */
+/**
+ * Level kinds: "auto" = the game decides as usual, forced on every level,
+ * only on the first level of the game (the start level), or never
+ */
+export type Force = "auto" | "always" | "once" | "never";
+
+/** The game's own choice with this override applied */
+export function applyForce(force: Force, natural: boolean, firstLevel: boolean): boolean {
+  switch (force) {
+    case "always": return true;
+    case "once": return firstLevel || natural;
+    case "never": return false;
+    default: return natural;
+  }
+}
+
 export interface CheatConfig {
   // Players
   playerSpeed: number;
@@ -30,6 +46,14 @@ export interface CheatConfig {
   enemyArmor: number; // Extra hits for every enemy
   ufoEnabled: boolean;
 
+  // Level kinds
+  alienLevel: Force;
+  gzhelLevel: Force;
+  bossLevel: Force;
+  bonusLevel: Force;
+  friendLevel: Force;
+  easyLevel: Force;
+
   crazyMode: boolean;
 }
 
@@ -56,6 +80,12 @@ export function defaultCheatConfig(): CheatConfig {
     enemiesOnScreen: 0,
     enemyArmor: 0,
     ufoEnabled: true,
+    alienLevel: "auto",
+    gzhelLevel: "auto",
+    bossLevel: "auto",
+    bonusLevel: "auto",
+    friendLevel: "auto",
+    easyLevel: "auto",
     crazyMode: false,
   };
 }

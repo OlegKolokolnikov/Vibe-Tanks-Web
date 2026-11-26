@@ -3,7 +3,7 @@ import type { Point } from "../engine/geometry";
 import { LabelNode, Node, ShapeNode } from "../engine/node";
 import { Scene, type Touch } from "../engine/scene";
 import type { View } from "../engine/view";
-import { CheatSettings, defaultCheatConfig, type CheatConfig } from "./cheatSettings";
+import { CheatSettings, defaultCheatConfig, type CheatConfig, type Force } from "./cheatSettings";
 import { MenuScene, createMenuButton, namedNodeAt } from "./menuScene";
 import { SoundManager } from "./sound";
 
@@ -12,13 +12,15 @@ enum Page {
   Player,
   PowerUps,
   Enemies,
+  Level,
   Crazy,
 }
-const PAGES = [Page.Player, Page.PowerUps, Page.Enemies, Page.Crazy];
+const PAGES = [Page.Player, Page.PowerUps, Page.Enemies, Page.Level, Page.Crazy];
 const PAGE_TITLES: Record<Page, string> = {
   [Page.Player]: "PLAYER",
   [Page.PowerUps]: "POWER-UPS",
   [Page.Enemies]: "ENEMIES",
+  [Page.Level]: "LEVEL",
   [Page.Crazy]: "CRAZY",
 };
 
@@ -29,6 +31,7 @@ interface Row {
 }
 
 type NumberKey = { [K in keyof CheatConfig]: CheatConfig[K] extends number ? K : never }[keyof CheatConfig];
+type ForceKey = { [K in keyof CheatConfig]: CheatConfig[K] extends Force ? K : never }[keyof CheatConfig];
 type BoolKey = { [K in keyof CheatConfig]: CheatConfig[K] extends boolean ? K : never }[keyof CheatConfig];
 
 const ACCENT = Colors.magenta;
@@ -61,6 +64,18 @@ function boolRow(title: string, key: BoolKey, on = "ON", off = "OFF"): Row {
     value: (c) => (c[key] ? on : off),
     change: (c) => {
       c[key] = !c[key];
+    },
+  };
+}
+
+/** AUTO / ALWAYS / ONCE / NEVER: force a level kind on every level or switch it off */
+function forceRow(title: string, key: ForceKey): Row {
+  const order: Force[] = ["auto", "always", "once", "never"];
+  return {
+    title,
+    value: (c) => c[key].toUpperCase(),
+    change: (c, delta) => {
+      c[key] = order[(Math.max(order.indexOf(c[key]), 0) + (delta < 0 ? order.length - 1 : 1)) % order.length];
     },
   };
 }
@@ -100,6 +115,15 @@ function rowsFor(page: Page): Row[] {
         listRow("ON SCREEN", "enemiesOnScreen", S.onScreenSteps, auto),
         listRow("EXTRA ARMOR", "enemyArmor", range(0, 5), (v) => (v === 0 ? "0" : `+${v}`)),
         boolRow("UFO", "ufoEnabled"),
+      ];
+    case Page.Level:
+      return [
+        forceRow("👽 ALIEN", "alienLevel"),
+        forceRow("🏺 GZHEL", "gzhelLevel"),
+        forceRow("👑 BOSS", "bossLevel"),
+        forceRow("✨ BONUS STAGE", "bonusLevel"),
+        forceRow("🤝 FRIEND", "friendLevel"),
+        forceRow("🐣 EASY", "easyLevel"),
       ];
     case Page.Crazy:
       return [boolRow("🤪 CRAZY MODE", "crazyMode")];
@@ -185,17 +209,27 @@ export class CheatScene extends Scene {
       this.pageNode.addChild(this.makeRow(row, index, config, { x, y }));
     });
 
-    if (crazy) {
-      const lines = [
+    let lines: string[] = [];
+    if (this.page === Page.Level) {
+      lines = [
+        "AUTO: as usual · ALWAYS: every level · ONCE: the first level only · NEVER: off.",
+        "Alien + boss = red alien with eyes · bonus + boss = the rat stage.",
+        "The bonus stage wins over Gzhel.",
+      ];
+    } else if (crazy) {
+      lines = [
         "Every level: 10 to 1000 enemies of any kind, bosses and aliens too,",
         "several UFOs and a crowd of friends with 1 to 5 hits each.",
         "Every game start: 3 to 99 lives and random power-ups.",
         "Speeds, fire rates, armor, enemy power-ups and UFO switch still apply.",
       ];
+    }
+    if (lines.length) {
+      const linesTop = crazy ? topY - this.rowHeight * 1.3 : topY - this.rowHeight * perColumn - this.rowHeight * 0.1;
       const fontSize = Math.min(16, height * 0.038);
       lines.forEach((line, i) => {
         this.pageNode.addChild(
-          makeLabel(line, "Helvetica", fontSize, Colors.lightGray, { x: width / 2, y: topY - this.rowHeight * 1.3 - i * fontSize * 1.5 }),
+          makeLabel(line, "Helvetica", fontSize, Colors.lightGray, { x: width / 2, y: linesTop - i * fontSize * 1.5 }),
         );
       });
     }
@@ -338,6 +372,7 @@ export class CheatScene extends Scene {
       case "Digit2":
       case "Digit3":
       case "Digit4":
+      case "Digit5":
         this.show((Number(code.slice(5)) - 1) as Page);
         return true;
     }
